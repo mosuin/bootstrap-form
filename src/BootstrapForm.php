@@ -6,6 +6,7 @@ use Collective\Html\FormBuilder;
 use Collective\Html\HtmlBuilder;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Session\SessionManager as Session;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Lang;
 
@@ -59,6 +60,13 @@ class BootstrapForm
      * @var string
      */
     protected $rightColumnClass;
+
+    /**
+     * The errorbag that is used for validation (multiple forms)
+     *
+     * @var string
+     */
+    protected $errorBag = 'default';
 
     /**
      * Construct the class.
@@ -115,6 +123,10 @@ class BootstrapForm
             return $this->model($options);
         }
 
+        if (array_key_exists('error_bag', $options)) {
+            $this->setErrorBag($options['error_bag']);
+        }
+
         return $this->form->open($options);
     }
 
@@ -144,7 +156,7 @@ class BootstrapForm
 
         if (isset($options['url'])) {
             // If we're explicity passed a URL, we'll use that.
-            array_forget($options, ['update', 'store']);
+            array_forget($options, ['model', 'update', 'store']);
             $options['method'] = isset($options['method']) ? $options['method'] : 'GET';
 
             return $this->form->model($model, $options);
@@ -153,13 +165,15 @@ class BootstrapForm
         if (!is_null($options['model']) && $options['model']->exists) {
             // If the form is passed a model, we'll use the update route to update
             // the model using the PUT method.
-            $route = Str::contains($options['update'], '@') ? 'action' : 'route';
+            $name = is_array($options['update']) ? array_first($options['update']) : $options['update'];
+            $route = Str::contains($name, '@') ? 'action' : 'route';
 
-            $options[$route] = [$options['update'], $options['model']->getRouteKey()];
+            $options[$route] = array_merge((array) $options['update'], [$options['model']->getRouteKey()]);
             $options['method'] = 'PUT';
         } else {
             // Otherwise, we're storing a brand new model using the POST method.
-            $route = Str::contains($options['store'], '@') ? 'action' : 'route';
+            $name = is_array($options['store']) ? array_first($options['store']) : $options['store'];
+            $route = Str::contains($name, '@') ? 'action' : 'route';
 
             $options[$route] = $options['store'];
             $options['method'] = 'POST';
@@ -315,6 +329,20 @@ class BootstrapForm
         return $this->input('date', $name, $label, $value, $options);
     }
 
+     /**
+     * Create a Bootstrap email time input.
+     *
+     * @param  string  $name
+     * @param  string  $label
+     * @param  string  $value
+     * @param  array   $options
+     * @return string
+     */
+    public function time($name, $label = null, $value = null, array $options = [])
+    {
+        return $this->input('time', $name, $label, $value, $options);
+    }
+
     /**
      * Create a Bootstrap textarea field input.
      *
@@ -359,7 +387,7 @@ class BootstrapForm
         $wrapperOptions = $this->isHorizontal() ? ['class' => implode(' ', [$this->getLeftColumnOffsetClass(), $this->getRightColumnClass()])] : [];
         $wrapperElement = '<div' . $this->html->attributes($wrapperOptions) . '>' . $inputElement . $this->getFieldError($name) . $this->getHelpText($name, $options) . '</div>';
 
-        return $this->getFormGroup(null, null, $wrapperElement);
+        return $this->getFormGroup($name, null, $wrapperElement);
     }
 
     /**
@@ -495,7 +523,17 @@ class BootstrapForm
     {
         $options = $this->getLabelOptions($options);
 
-        return $this->form->label($name, $value, $options);
+        $escapeHtml = false;
+
+        if (is_array($value) and isset($value['html'])) {
+            $value = $value['html'];
+        } elseif ($value instanceof HtmlString) {
+            $value = $value->toHtml();
+        } else {
+            $escapeHtml = true;
+        }
+
+        return $this->form->label($name, $value, $options, $escapeHtml);
     }
 
     /**
@@ -838,12 +876,33 @@ class BootstrapForm
     /**
      * Set the column class for the right column of a horizontal form.
      *
-     * @param  string  $lcass
+     * @param  string  $class
      * @return void
      */
     public function setRightColumnClass($class)
     {
         $this->rightColumnClass = $class;
+    }
+
+    /**
+     * Get the error bag.
+     *
+     * @return string
+     */
+    protected function getErrorBag()
+    {
+        return $this->errorBag;
+    }
+
+    /**
+     * Set the error bag.
+     *
+     * @param  $errorBag  string
+     * @return void
+     */
+    protected function setErrorBag($errorBag)
+    {
+        $this->errorBag = $errorBag;
     }
 
     /**
@@ -888,11 +947,13 @@ class BootstrapForm
         if ($this->getErrors()) {
             $allErrors = $this->config->get('bootstrap_form.show_all_errors');
 
+            $errorBag = $this->getErrors()->{$this->getErrorBag()};
+
             if ($allErrors) {
-                return implode('', $this->getErrors()->get($field, $format));
+                return implode('', $errorBag->get($field, $format));
             }
 
-            return $this->getErrors()->first($field, $format);
+            return $errorBag->first($field, $format);
         }
     }
 
